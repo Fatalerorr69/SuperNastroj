@@ -1,42 +1,90 @@
 #!/bin/bash
-# SuperNastroj Automatic Updater - Enhanced Version
+# =====================================================================
+# SuperNastroj Updater - Bezpečná aktualizace TUI a pluginů s logováním
+# =====================================================================
 
+BASE_DIR="$HOME/SuperNastroj"
+LOG_DIR="$BASE_DIR/SuperNastroj_Logs"
 REPO_URL="https://github.com/Fatalerorr69/SuperNastroj.git"
-TARGET_DIR="$HOME/SuperNastroj"
-BACKUP_DIR="$HOME/SuperNastroj_backup_$(date +%Y%m%d_%H%M%S)"
+BRANCH="main"
 
-echo "[*] Kontrola složky SuperNastroj..."
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/updater.log"
 
-if [ -d "$TARGET_DIR" ]; then
-    if [ -d "$TARGET_DIR/.git" ]; then
-        echo "[*] Git repozitář existuje, provádím pull..."
-        cd "$TARGET_DIR" || exit
-        git pull origin main
+log() {
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+}
+
+log "[*] Spouštím updater..."
+
+# Aktualizace repozitáře
+if [ -d "$BASE_DIR/.git" ]; then
+    log "[*] Aktualizuji existující repozitář..."
+    cd "$BASE_DIR" || { log "[!] Nelze přejít do $BASE_DIR"; exit 1; }
+    git reset --hard >> "$LOG_FILE" 2>&1
+    git pull origin $BRANCH >> "$LOG_FILE" 2>&1
+else
+    log "[*] Klonování repozitáře poprvé..."
+    git clone -b $BRANCH $REPO_URL "$BASE_DIR" >> "$LOG_FILE" 2>&1
+fi
+
+# Kontrola TUI
+TUI="$BASE_DIR/supernastroj_v5_tui.sh"
+if [ ! -f "$TUI" ]; then
+    log "[!] Chyba: TUI soubor neexistuje!"
+    exit 1
+fi
+chmod +x "$TUI"
+
+# Pluginy
+PLUGIN_DIR="$BASE_DIR/plugins"
+if [ -d "$PLUGIN_DIR" ]; then
+    chmod +x "$PLUGIN_DIR/"*.sh 2>/dev/null
+    PLUGINS=()
+    for f in "$PLUGIN_DIR/"*.sh; do
+        [ -f "$f" ] && PLUGINS+=("$f")
+    done
+    if [ ${#PLUGINS[@]} -eq 0 ]; then
+        log "[!] Žádné platné pluginy nebyly nalezeny."
     else
-        echo "[*] Složka existuje, ale není git repozitář."
-        echo "[*] Vytvářím zálohu do $BACKUP_DIR ..."
-        mv "$TARGET_DIR" "$BACKUP_DIR"
-        echo "[*] Klonování repozitáře z GitHubu..."
-        git clone "$REPO_URL" "$TARGET_DIR"
+        log "[*] Pluginy připraveny ke spuštění: ${#PLUGINS[@]}"
     fi
 else
-    echo "[*] Složka neexistuje, klonování repozitáře..."
-    git clone "$REPO_URL" "$TARGET_DIR"
+    log "[!] Pluginy nebyly nalezeny."
 fi
 
-# Přenesení starých pluginů, pokud existují
-if [ -d "$BACKUP_DIR/plugins" ]; then
-    echo "[*] Přenáším staré pluginy..."
-    cp -r "$BACKUP_DIR/plugins/"* "$TARGET_DIR/plugins/"
-    chmod +x "$TARGET_DIR/plugins/"*.sh
+# Volba spuštění pluginů
+read -rp "[*] Chceš spustit všechny pluginy nebo vybrat konkrétní? (vše/vybrat) " choice
+case "$choice" in
+    vše)
+        log "[*] Spouštím všechny pluginy..."
+        for plugin in "${PLUGINS[@]}"; do
+            log "[*] Spouštím $plugin"
+            "$plugin" >> "$LOG_FILE" 2>&1
+            [ $? -eq 0 ] && log "[+] $plugin dokončen úspěšně." || log "[!] Chyba při spuštění $plugin."
+        done
+        ;;
+    vybrat)
+        log "[*] Dostupné pluginy:"
+        select p in "${PLUGINS[@]}"; do
+            if [ -f "$p" ]; then
+                log "[*] Spouštím vybraný plugin $p"
+                "$p" >> "$LOG_FILE" 2>&1
+                [ $? -eq 0 ] && log "[+] Plugin dokončen úspěšně." || log "[!] Chyba při spuštění pluginu."
+            fi
+            break
+        done
+        ;;
+    *)
+        log "[!] Neplatná volba, pluginy nebudou spuštěny."
+        ;;
+esac
+
+# Spuštění TUI
+log "[*] Spouštím TUI..."
+"$TUI" >> "$LOG_FILE" 2>&1
+if [ $? -eq 0 ]; then
+    log "[+] TUI spuštěna úspěšně."
+else
+    log "[!] Chyba při spuštění TUI."
 fi
-
-# Nastavení spustitelnosti updateru a TUI
-chmod +x "$TARGET_DIR/supernastroj_updater.sh"
-chmod +x "$TARGET_DIR/supernastroj_v5_tui.sh"
-
-# Spuštění updateru a TUI
-echo "[*] Spouštím TUI..."
-cd "$TARGET_DIR" || exit
-./supernastroj_v5_tui.sh
-echo "[*] Fully automatic updater dokončen."
